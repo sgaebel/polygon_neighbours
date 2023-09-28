@@ -1,7 +1,10 @@
 from distutils.core import setup, Extension
 
 polygon_module = Extension('polygon_neighbours',
-                           sources = ['src/polygon_tools/find_neighbours.cpp'])
+                           sources = ['src/polygon_neighbours/find_neighbours.cpp'],
+                     #       include_dirs = ['src/polygon_neighbours'],
+                     #       extra_compile_args = ['-DDOCKER_BUILD', '-Isrc/polygon_neighbours', '-Isrc/polygon_neighbours/cnpy.h']
+                           )
 
 long_description = """Various CPython extensions for manipulating and analysing
 polygons.

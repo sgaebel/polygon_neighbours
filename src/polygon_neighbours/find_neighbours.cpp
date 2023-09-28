@@ -1,6 +1,6 @@
 /* CPython extension for finding neighouring polygons in parallel */
 
-#if 1
+#ifdef DOCKER_BUILD
   // local builds
   #include <python3.10/Python.h>
 #else
