@@ -8,5 +8,4 @@ WORKDIR /src
 # auditwheel repair /output/*whl -w /output
 # rm /output/*-linux_*
 # docker container ls
-# docker cp romantic_euclid:/output dist
-
+# docker cp <container_name>:/output dist
