@@ -14,3 +14,9 @@ performance: clean install
 performance-help:
 	echo "use 'python3 scripts/check_performance.py --help' for custom profiling options."
 
+wheel:
+	sed -i 's/LOCAL_BUILD/DOCKER_BUILD/' src/polygon_neighbours/find_neighbours.cpp
+	python3.10 -m build --outdir /output
+	python3.10 -m build --sdist --outdir /output
+	auditwheel repair /output/*whl -w /output
+	yes | rm /output/*-linux_*

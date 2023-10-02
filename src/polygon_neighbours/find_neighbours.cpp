@@ -1,5 +1,8 @@
 /* CPython extension for finding neighouring polygons in parallel */
 
+// will be replaced be "DOCKER_BUILD" for the wheel building inside docker
+#define LOCAL_BUILD
+
 #ifdef DOCKER_BUILD
   // docker build for wheel
   #include <Python.h>
