@@ -8,7 +8,7 @@ polygons.
 """
 
 setup (name = 'polygon_neighbours',
-       version = '1.0',
+       version = '1.1',
        description = 'CPython extension for finding bordering polygons.',
        url = 'https://github.com/sgaebel/polygon_neighbours',
        author = 'Dr. Sebastian M. Gaebel',
