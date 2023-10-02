@@ -1,11 +1,11 @@
 /* CPython extension for finding neighouring polygons in parallel */
 
 #ifdef DOCKER_BUILD
-  // local builds
-  #include <python3.10/Python.h>
-#else
   // docker build for wheel
   #include <Python.h>
+#else
+  // local builds
+  #include <python3.10/Python.h>
 #endif
 
 // #define DEBUG_MAIN
@@ -14,24 +14,30 @@
 // #define DEBUG_TASK
 // #define DEBUG_LOADING
 
-#include <vector>
-#include <string>
-#include <thread>
 #include <algorithm>
-#include <stdexcept>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 #include <filesystem>
+#include <numeric>
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include "cnpy.h"
 
-#define PARALLEL
+#define THREAD_DELAY_MS 50
 #define INPUT_FILE "/tmp/_temp_polygons_todo.npz"
 #define OUTPUT_FILE_BASE "/tmp/_temp_polygon_neighbours_"
+#define data_type double
+#define NL_flush std::endl << std::flush
 
 
 class Vertex {
     public:
-        double x, y;
+        data_type x, y;
 
-        Vertex(const double x, const double y)
+        Vertex(const data_type x, const data_type y)
         {
             this->x = x;
             this->y = y;
@@ -63,10 +69,10 @@ class Vertex {
 class PolygonEdge
 {
     private:
-        double x0, y0, x1, y1;
+        data_type x0, y0, x1, y1;
 
     public:
-        PolygonEdge(double x0, double y0, double x1, double y1) {
+        PolygonEdge(data_type x0, data_type y0, data_type x1, data_type y1) {
             this->x0 = x0;
             this->y0 = y0;
             this->x1 = x1;
@@ -164,6 +170,77 @@ class Polygon {
 };
 
 
+class Timer
+{
+    std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
+    std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
+    long long delta_t_ns = -1;
+    const long long ns_per_µs = 1000;
+    const long long ns_per_ms = 1000 * ns_per_µs;
+    const long long ns_per_s = 1000 * ns_per_ms;
+    const long long ns_per_min = 60 * ns_per_s;
+    const long long ns_per_hour = 60 * ns_per_min;
+    const int readability_factor = 100;
+    public:
+        Timer() {
+            this->start_time = std::chrono::high_resolution_clock::now();
+        }
+        Timer(long long delta_t_ns) {
+            this->delta_t_ns = delta_t_ns;
+        }
+        const long long elapsed() {
+            return this->delta_t_ns;
+        }
+        const void end() {
+            this->end_time = std::chrono::high_resolution_clock::now();
+        }
+        operator std::string() {
+            if (this->delta_t_ns < 0) {
+                this->delta_t_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(this->end_time - this->start_time).count();
+            }
+            const long long delta_t = this->delta_t_ns;
+            std::string value, unit;
+            if (delta_t > ns_per_hour * readability_factor) {  // hours
+                       // ^ µs   ^ ms   ^ s    ^min ^h
+                long long hours = div(delta_t, ns_per_hour).quot;
+                long long minutes = div(delta_t, ns_per_hour).rem;
+                std::string value = std::to_string(hours) + ':' + std::to_string(minutes);
+                std::string unit = "h";
+                return value + " " + unit;
+            } else if (delta_t > ns_per_min * readability_factor) {
+                long long minutes = div(delta_t, ns_per_min).quot;
+                long long seconds = div(delta_t, ns_per_min).rem;
+                std::string value = std::to_string(minutes) + ':' + std::to_string(seconds);
+                std::string unit = "min";
+                return value + " " + unit;
+            } else if (delta_t > ns_per_s * readability_factor) {
+                long long seconds = div(delta_t, ns_per_s).quot;
+                long long millisec = div(delta_t, ns_per_s).rem;
+                std::string value = std::to_string(seconds) + '.' + std::to_string(millisec/10);
+                std::string unit = "sec";
+                return value + " " + unit;
+            } else if (delta_t > ns_per_ms * readability_factor) {
+                long long millisec = div(delta_t, ns_per_ms).quot;
+                long long microsec = div(delta_t, ns_per_ms).rem;
+                std::string value = std::to_string(millisec) + '.' + std::to_string(microsec/10);
+                std::string unit = "ms";
+                return value + " " + unit;
+            } else if (delta_t > ns_per_µs * readability_factor) {
+                long long microsec = div(delta_t, ns_per_µs).quot;
+                long long nanosec = div(delta_t, ns_per_µs).rem;
+                std::string value = std::to_string(microsec) + '.' + std::to_string(nanosec/10);
+                std::string unit = "µs";
+                return value + " " + unit;
+            } else {
+                std::string value = std::to_string(delta_t);
+                std::string unit = "ns";
+                return value + " " + unit;
+            }
+            return NULL;
+        }
+};
+
+
 const std::vector<size_t> load_test_indices_from_npy(const std::string path)
 {
     cnpy::NpyArray temp = cnpy::npz_load(path, "n_test_polygons");
@@ -201,7 +278,7 @@ const std::vector<Polygon> load_polygons_from_npz(const std::string path)
         temp = cnpy::npz_load(path, length_key);
         const size_t length = *temp.data<size_t>();
         temp = cnpy::npz_load(path, data_key);
-        double* data = temp.data<double>();
+        data_type* data = temp.data<data_type>();
         std::vector<Vertex> polygon_data;
         for(size_t i = 0; i < length; ++i) {
             polygon_data.push_back(Vertex(data[2*i], data[2*i+1]));
@@ -219,11 +296,44 @@ const std::vector<Polygon> load_polygons_from_npz(const std::string path)
 }
 
 
+// ~~~*** GLOBALS ***~~~
 // load the input data and make it available globally
 std::vector<size_t> test_indices;
 size_t n_test_indices;
 std::vector<Polygon> polygons;
 size_t n_polygons;
+std::vector<std::unique_ptr<std::atomic_ulong>> n_processed;
+unsigned long n_processed_serial = 0;
+size_t N_THREADS_USED;
+int progress_step_size = 0;
+int verbose = 0;
+int parallel = 1;
+// ~~** END GLOBALS **~~
+
+
+const unsigned long increment_get_processed(const size_t thread_idx)
+{
+    if (parallel)
+        return ++(*n_processed.at(thread_idx));
+    return ++n_processed_serial;
+}
+
+
+void print_progress_message()
+{
+    if (parallel) {
+        for (size_t idx = 0; idx < N_THREADS_USED; ++idx) {
+            unsigned long count = *n_processed.at(idx);
+            std::string seperator;
+            if (idx != 0) seperator = " ~ "; else seperator = "";
+            std::cout << seperator << "T" << std::to_string(idx) << " = " << std::to_string(count);
+        }
+        std::cout << " / " << std::to_string(n_polygons) << "\r";
+        return;
+    }
+    std::cout << "#" << n_processed_serial << " / " << n_polygons << "\r";
+    return;
+}
 
 
 // to refactor / test
@@ -231,21 +341,32 @@ size_t n_polygons;
 //    and check progress via python thread
 void find_neighbours_task(const size_t thread_idx)
 {
+    if (verbose) {
+        if (parallel) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(THREAD_DELAY_MS*thread_idx));
+            std::cout << "Thread " << thread_idx+1 << " launched." << NL_flush;
+            std::this_thread::sleep_for(std::chrono::milliseconds(THREAD_DELAY_MS*(N_THREADS_USED-thread_idx)));
+        }
+        else {
+            std::cout << "Running test index " << thread_idx+1 << NL_flush;
+        }
+    }
+        
     if(thread_idx >= test_indices.size())
         return;
     const size_t test_polygon_idx = test_indices.at(thread_idx);
 
     #ifdef DEBUG_TASK
-    std::cout << "CHECKPOINT 0 " << test_polygon_idx << " :: " << thread_idx << std::endl << std::flush;
+    std::cout << "CHECKPOINT 0 " << test_polygon_idx << " :: " << thread_idx << NL_flush;
     #endif
 
     #ifdef DEBUG_TASK
-    std::cout << "POLYGON ACCESS: " << thread_idx << " :: " << test_polygon_idx << std::endl << std::flush;
+    std::cout << "POLYGON ACCESS: " << thread_idx << " :: " << test_polygon_idx << NL_flush;
     #endif
     Polygon test_polygon = polygons.at(test_polygon_idx);
 
     #ifdef DEBUG_TASK
-    std::cout << "CHECKPOINT 1" << std::endl << std::flush;
+    std::cout << "CHECKPOINT 1" << NL_flush;
     #endif
 
     // loop through the other polygons searching for a neighouring polygon
@@ -255,31 +376,39 @@ void find_neighbours_task(const size_t thread_idx)
             // do not check for shared edges with itself
             continue;
         #ifdef DEBUG_TASK
-        std::cout << "CHECKPOINT 2" << std::endl << std::flush;
+        std::cout << "CHECKPOINT 2" << NL_flush;
         #endif
         const bool share_edge = test_polygon.share_edge(polygons.at(idx));
         if (share_edge) {
             // add the currently checked index to the matches
             matches.push_back(idx);
             #ifdef DEBUG_TASK
-            std::cout << "LOOP match " << idx << std::endl << std::flush;
+            std::cout << "LOOP match " << idx << NL_flush;
             #endif
         }
         #ifdef DEBUG_TASK
         else {
-            std::cout << "LOOP no match " << idx << std::endl << std::flush;
+            std::cout << "LOOP no match " << idx << NL_flush;
         }
-        std::cout << "CHECKPOINT 3" << std::endl << std::flush;
+        std::cout << "CHECKPOINT 3" << NL_flush;
         #endif
+        const unsigned long n_processed = increment_get_processed(thread_idx);
+        if ((progress_step_size > 0)
+            && (thread_idx == 0)
+            && (n_processed % progress_step_size == 0))
+            // std::cout << "~";
+            print_progress_message();
     }
     if (matches.size() == 0)
         matches.push_back(-1);
     // write results to disk
     std::string out_path = OUTPUT_FILE_BASE + std::to_string(thread_idx) + ".npy";
     #ifdef DEBUG_TASK
-    std::cout << "Output file name: " << out_path << std::endl << std::flush;
+    std::cout << "Output file name: " << out_path << NL_flush;
     #endif
     cnpy::npy_save(out_path, &matches[0], {matches.size()}, "w");
+    if (thread_idx == 0)
+        std::cout << std::endl << NL_flush;
     return;
 }
 
@@ -289,12 +418,34 @@ extern "C" {
 #endif
 static PyObject* find_neighbours(PyObject* self, PyObject* args)
 {
-    // no arguments to parse, all input via .npy & .npz files.
+    if (!PyArg_ParseTuple(args, "|iii", &progress_step_size, &verbose,
+                          &parallel))
+        return NULL;
+
     if (std::filesystem::exists(std::filesystem::path(INPUT_FILE))) {
+        if (verbose) {
+            std::cout << "Loading data... " << std::flush;
+        }
+        Timer load_timer = Timer();
         test_indices = load_test_indices_from_npy(INPUT_FILE);
         n_test_indices = test_indices.size();
         polygons = load_polygons_from_npz(INPUT_FILE);
         n_polygons = polygons.size();
+        load_timer.end();
+        if (verbose) {
+            std::cout << "done in " << std::string(load_timer) << NL_flush;
+        }
+        // test indices ought to be equal or multiple of the number of hardware
+        //  threads
+        const size_t N_THREADS = std::thread::hardware_concurrency();
+        // use the small of the two values to avoid attemting to start
+        //  threads without available work
+        N_THREADS_USED = (N_THREADS > n_test_indices) ? n_test_indices : N_THREADS;
+        // holds information about the progress of seach thread
+        n_processed.resize(N_THREADS_USED);
+        // initialise the progress counter to zero
+        for (auto& ptr : n_processed)
+            ptr = std::make_unique<std::atomic_ulong>(0);
     }
     else {
         std::string message = "Input file \"";
@@ -303,47 +454,47 @@ static PyObject* find_neighbours(PyObject* self, PyObject* args)
         PyErr_SetString(PyExc_FileNotFoundError, message.c_str());
         return NULL;
     }
-    // std::cout << "Blubb" << std::endl << std::flush;
 
-    // tasks for this function:
-    //  * run tasks and manage threads
-    
-    // test indices ought to be equal or multiple of the number of hardware
-    //  threads
-    const size_t N_THREADS = std::thread::hardware_concurrency();
-    const size_t N_THREADS_USED = (N_THREADS > n_test_indices) ? n_test_indices : N_THREADS;
+    Timer run_timer = Timer();
+    if (parallel) {
+        // keep record of threads
+        std::vector<std::thread> threads;
+        // threads are launched, then this 'main' thread runs one task...
+        for (size_t idx = 1; idx < N_THREADS_USED; ++idx) {
+            threads.push_back(std::thread(find_neighbours_task, idx));
+        }
+        // ...and joins the threads afterwards.
+        find_neighbours_task(0);
+        for (size_t idx = 0; idx < threads.size(); ++idx) {
+            threads.at(idx).join();
+        }
+    } else {
+        // for testing and comparison purposes, run tasks in order in the main thread
+        for (size_t idx = 0; idx < N_THREADS_USED; ++idx) {
+            #ifdef DEBUG_MAIN
+            std::cout << "Running task " << idx << "... ";
+            #endif
+            find_neighbours_task(idx);
+            #ifdef DEBUG_MAIN
+            std::cout << "done." << std::endl;
+            #endif
+        }
+    }
+    run_timer.end();
+    if (verbose) {
+        std::cout << "Processing time: " << std::string(run_timer);
+        std::cout << " ::: " << std::string(Timer(run_timer.elapsed() / n_polygons))
+                << " per polygon" << NL_flush; 
+    }
 
-    #ifdef PARALLEL
-    // keep record of threads
-    std::vector<std::thread> threads;
-    // threads are launched, then this 'main' thread runs one task...
-    for (size_t idx = 1; idx < N_THREADS_USED; ++idx) {
-        threads.push_back(std::thread(find_neighbours_task, idx));
-    }
-    // ...and joins the threads afterwards.
-    find_neighbours_task(0);
-    for (size_t idx = 0; idx < threads.size(); ++idx) {
-        threads.at(idx).join();
-    }
-    #else
-    // for testing purposes, run tasks in order in the main thread
-    for (size_t idx = 0; idx < n_test_indices; ++idx) {
-        #ifdef DEBUG_MAIN
-        std::cout << "Running task " << idx << "... ";
-        #endif
-        find_neighbours_task(idx);
-        #ifdef DEBUG_MAIN
-        std::cout << "done." << std::endl;
-        #endif
-    }
-    #endif
+    std::cout << std::endl;
 
     Py_RETURN_NONE;
 }
 
 
 static PyMethodDef pt_methods[] = {
-    { "find_neighbours", find_neighbours, METH_NOARGS,
+    { "find_neighbours", find_neighbours, METH_VARARGS,
     "Finds the neighbours of polygons within a large set of polygons.\n"
     "Polygons are read from 'data/polygons_todo.npz' and neighours\n"
     "are written to 'data/neighbours.npy.\n"
@@ -354,11 +505,17 @@ static PyMethodDef pt_methods[] = {
     "within the input .npz file unser the keys 'n_test_polygons' and\n"
     "'test_indices'.\n"
     "\n"
-    "\n"
-    "\n"
     "Parameters\n"
     "----------\n"
-    "None\n"
+    "progress_step_size: int\n"
+    "    Interval at which progress is printed, in overall polygon counts.\n"
+    "    i.e. after every x globally processed polygons, progress is printed.\n"
+    "    If 0, no progress is printed. Default value is 0.\n"
+    "verbose: bool | int\n"
+    "    Toggles the verbosity to print some useful threading and timing\n"
+    "    information. Adds a ~100ms delay to every call. Default value is False.\n"
+    "parallel: bool | int\n"
+    "    Toggles if the search shoul be run in parallel. Default value is True.\n"
     "\n"
     "Returns\n"
     "-------\n"

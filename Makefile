@@ -7,3 +7,10 @@ install:
 
 test: clean install
 	pytest
+
+performance: clean install
+	python3 scripts/check_performance.py
+
+performance-help:
+	echo "use 'python3 scripts/check_performance.py --help' for custom profiling options."
+
