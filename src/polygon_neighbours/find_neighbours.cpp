@@ -166,18 +166,6 @@ class Polygon {
                         return true;
             return false;
         }
-
-        operator std::string() {
-            size_t start = -1;
-            std::string string = "";
-            for (size_t idx = 0; idx < this->edges.size(); ++idx) {
-                start = string.find_first_of(')');
-                if (start == std::string::npos) start = 0; else ++start;
-                for (int i=0;i<start;++i) string += ' ';
-                string += this->edges.at(idx).print();
-            }
-            return string;
-        }
 };
 
 
@@ -191,7 +179,9 @@ class Timer
     const long long ns_per_s = 1000 * ns_per_ms;
     const long long ns_per_min = 60 * ns_per_s;
     const long long ns_per_hour = 60 * ns_per_min;
-    const int readability_factor = 100;
+    // to display e.g. "1234ns" instead of the slightly less readable "1.234µs"
+    //  until at least 
+    const int readability_factor = 20;
     public:
         Timer() {
             this->start_time = std::chrono::high_resolution_clock::now();
@@ -206,46 +196,41 @@ class Timer
             this->end_time = std::chrono::high_resolution_clock::now();
         }
         operator std::string() {
+            // only set delta_t if it was not used for the constructor
+            //  as in this case start_time and end_time are not set.
             if (this->delta_t_ns < 0) {
                 this->delta_t_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(this->end_time - this->start_time).count();
             }
-            const long long delta_t = this->delta_t_ns;
-            std::string value, unit;
-            if (delta_t > ns_per_hour * readability_factor) {  // hours
-                       // ^ µs   ^ ms   ^ s    ^min ^h
+            const long long delta_t = this->delta_t_ns;  // readability
+            std::string value;
+            if (delta_t > ns_per_hour * readability_factor) {
                 long long hours = div(delta_t, ns_per_hour).quot;
                 long long minutes = div(delta_t, ns_per_hour).rem;
                 std::string value = std::to_string(hours) + ':' + std::to_string(minutes);
-                std::string unit = "h";
-                return value + " " + unit;
+                return value + " h";
             } else if (delta_t > ns_per_min * readability_factor) {
                 long long minutes = div(delta_t, ns_per_min).quot;
                 long long seconds = div(delta_t, ns_per_min).rem;
                 std::string value = std::to_string(minutes) + ':' + std::to_string(seconds);
-                std::string unit = "min";
-                return value + " " + unit;
+                return value + " min";
             } else if (delta_t > ns_per_s * readability_factor) {
                 long long seconds = div(delta_t, ns_per_s).quot;
                 long long millisec = div(delta_t, ns_per_s).rem;
                 std::string value = std::to_string(seconds) + '.' + std::to_string(millisec/10);
-                std::string unit = "sec";
-                return value + " " + unit;
+                return value + " sec";
             } else if (delta_t > ns_per_ms * readability_factor) {
                 long long millisec = div(delta_t, ns_per_ms).quot;
                 long long microsec = div(delta_t, ns_per_ms).rem;
                 std::string value = std::to_string(millisec) + '.' + std::to_string(microsec/10);
-                std::string unit = "ms";
-                return value + " " + unit;
+                return value + " ms";
             } else if (delta_t > ns_per_µs * readability_factor) {
                 long long microsec = div(delta_t, ns_per_µs).quot;
                 long long nanosec = div(delta_t, ns_per_µs).rem;
                 std::string value = std::to_string(microsec) + '.' + std::to_string(nanosec/10);
-                std::string unit = "µs";
-                return value + " " + unit;
+                return value + " µs";
             } else {
                 std::string value = std::to_string(delta_t);
-                std::string unit = "ns";
-                return value + " " + unit;
+                return value + " ns";
             }
             return NULL;
         }
