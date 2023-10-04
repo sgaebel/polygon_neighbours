@@ -137,12 +137,18 @@ class Polygon {
         std::vector<Vertex> vertices;
 
     public:
+        std::vector<PolygonEdge> edges;
+
         Polygon(std::vector<Vertex> vertices)
         {
             if (vertices.front() != vertices.back()) {
                 throw std::invalid_argument("Polygon is not closed.");
             }
             this->vertices = vertices;
+            this->edges = std::vector<PolygonEdge>();
+            for (size_t idx = 0; idx < this->size()-1; ++idx)
+                edges.push_back(PolygonEdge(this->vertices.at(idx),
+                                            this->vertices.at(idx+1)));
         }
 
         const size_t size() {
@@ -153,22 +159,24 @@ class Polygon {
             return this->vertices.at(idx);
         }
 
-        const std::vector<PolygonEdge> as_edges() {
-            std::vector<PolygonEdge> edges;
-            for (size_t idx = 0; idx < this->size()-1; ++idx)
-                edges.push_back(PolygonEdge(this->vertices.at(idx),
-                                            this->vertices.at(idx+1)));
-            return edges;
-        }
-
         const bool share_edge(Polygon &other) {
-            std::vector<PolygonEdge> edges_self = this->as_edges();
-            std::vector<PolygonEdge> edges_other = other.as_edges();
-            for(size_t idx_self = 0; idx_self < edges_self.size(); ++idx_self)
-                for(size_t idx_other = 0; idx_other < edges_other.size(); ++idx_other)
-                    if(edges_self.at(idx_self) == edges_other.at(idx_other))
+            for(size_t idx_self = 0; idx_self < this->edges.size(); ++idx_self)
+                for(size_t idx_other = 0; idx_other < other.edges.size(); ++idx_other)
+                    if(this->edges.at(idx_self) == other.edges.at(idx_other))
                         return true;
             return false;
+        }
+
+        operator std::string() {
+            size_t start = -1;
+            std::string string = "";
+            for (size_t idx = 0; idx < this->edges.size(); ++idx) {
+                start = string.find_first_of(')');
+                if (start == std::string::npos) start = 0; else ++start;
+                for (int i=0;i<start;++i) string += ' ';
+                string += this->edges.at(idx).print();
+            }
+            return string;
         }
 };
 
@@ -410,7 +418,7 @@ void find_neighbours_task(const size_t thread_idx)
     std::cout << "Output file name: " << out_path << NL_flush;
     #endif
     cnpy::npy_save(out_path, &matches[0], {matches.size()}, "w");
-    if (thread_idx == 0)
+    if (verbose && thread_idx == 0)
         std::cout << std::endl << NL_flush;
     return;
 }
@@ -419,11 +427,20 @@ void find_neighbours_task(const size_t thread_idx)
 #ifdef __cplusplus
 extern "C" {
 #endif
-static PyObject* find_neighbours(PyObject* self, PyObject* args)
+static PyObject* find_neighbours(PyObject* self, PyObject* args, PyObject* kwargs)
 {
-    if (!PyArg_ParseTuple(args, "|iii", &progress_step_size, &verbose,
-                          &parallel))
+    static char* keywords[] = {"progress_step_size", "verbose",
+                               "parallel", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|iii:find_neighbours",
+                                     keywords, &progress_step_size,
+                                     &verbose, &parallel)) {
         return NULL;
+    }
+
+    // if (!PyArg_ParseTuple(args, "|iii", &progress_step_size, &verbose,
+    //                       &parallel))
+    //     return NULL;
 
     if (std::filesystem::exists(std::filesystem::path(INPUT_FILE))) {
         if (verbose) {
@@ -497,7 +514,7 @@ static PyObject* find_neighbours(PyObject* self, PyObject* args)
 
 
 static PyMethodDef pt_methods[] = {
-    { "find_neighbours", find_neighbours, METH_VARARGS,
+    { "find_neighbours", (PyCFunction) find_neighbours, METH_VARARGS | METH_KEYWORDS,
     "Finds the neighbours of polygons within a large set of polygons.\n"
     "Polygons are read from 'data/polygons_todo.npz' and neighours\n"
     "are written to 'data/neighbours.npy.\n"

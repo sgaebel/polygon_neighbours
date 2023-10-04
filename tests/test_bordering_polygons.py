@@ -65,6 +65,13 @@ def polygon_setup(N_polygons, N_test):
     return
 
 
+def load_results(N_test):
+    neighbours = [None]*N_test
+    for i in range(N_test):
+        neighbours[i] = np.load(f'/tmp/_temp_polygon_neighbours_{i}.npy')
+    return neighbours
+
+
 def cleanup(N_test):
     time.sleep(0.2)
     os.remove('/tmp/_temp_polygons_todo.npz')
@@ -74,12 +81,22 @@ def cleanup(N_test):
     return
 
 
+def print_failures(result, expected):
+    assert len(result) == len(expected)
+    print('IDX\tRESULTS:\t\tEXPECTED:')
+    for idx in range(len(result)):
+        print(f'{idx}\t{result[idx]!r}\t{expected[idx]!r}')
+    return
+
+
 def test_neighbours_0():
     # test c++ extension directly
     N_polygons = 6
     N_test = 3
     polygon_setup(N_polygons=N_polygons, N_test=N_test)
+    print('START 0')
     polygon_neighbours.find_neighbours(0, False, True)
+    print('END 0')
     # expected:
     #   1 -> (0, 2, 3)
     #   4 -> (3,)
@@ -87,9 +104,13 @@ def test_neighbours_0():
     expected = [np.array([-1])] * N_test
     expected[0] = np.array([0, 2, 3])
     expected[1] = np.array([3,])
+    result = load_results(N_test)
     for i in range(N_test):
-        neighbours = np.load(f'/tmp/_temp_polygon_neighbours_{i}.npy')
-        assert np.all(expected[i] == neighbours)
+        try:
+            assert np.all(expected[i] == result[i])
+        except:
+            print_failures(result, expected)
+            raise
     cleanup(N_test=N_test)
     return
 
@@ -98,7 +119,9 @@ def test_neighbours_1():
     N_polygons = 25
     N_test = N_CPU
     polygon_setup(N_polygons=N_polygons, N_test=N_test)
+    print('START 1')
     polygon_neighbours.find_neighbours(0, False, True)
+    print('END 1')
     # expected:
     #   1 -> (0, 2, 3)
     #   4 -> (3,)
@@ -106,9 +129,13 @@ def test_neighbours_1():
     expected = [np.array([-1])] * N_test
     expected[0] = np.array([0, 2, 3])
     expected[1] = np.array([3,])
+    result = load_results(N_test)
     for i in range(N_test):
-        neighbours = np.load(f'/tmp/_temp_polygon_neighbours_{i}.npy')
-        assert np.all(expected[i] == neighbours)
+        try:
+            assert np.all(expected[i] == result[i])
+        except:
+            print_failures(result, expected)
+            raise
     cleanup(N_test=N_test)
     return
 
@@ -119,7 +146,9 @@ def test_neighbours_2():
     N_polygons = 6
     N_test = 3
     polygon_setup(N_polygons=N_polygons, N_test=N_test)
+    print('START 2')
     polygon_neighbours.find_neighbours(0, False, False)
+    print('END 2')
     # expected:
     #   1 -> (0, 2, 3)
     #   4 -> (3,)
@@ -127,9 +156,13 @@ def test_neighbours_2():
     expected = [np.array([-1])] * N_test
     expected[0] = np.array([0, 2, 3])
     expected[1] = np.array([3,])
+    result = load_results(N_test)
     for i in range(N_test):
-        neighbours = np.load(f'/tmp/_temp_polygon_neighbours_{i}.npy')
-        assert np.all(expected[i] == neighbours)
+        try:
+            assert np.all(expected[i] == result[i])
+        except:
+            print_failures(result, expected)
+            raise
     cleanup(N_test=N_test)
     return
 
@@ -139,7 +172,9 @@ def test_neighbours_3():
     N_polygons = 25
     N_test = N_CPU
     polygon_setup(N_polygons=N_polygons, N_test=N_test)
+    print('START 3')
     polygon_neighbours.find_neighbours(0, False, False)
+    print('END 3')
     # expected:
     #   1 -> (0, 2, 3)
     #   4 -> (3,)
@@ -147,8 +182,39 @@ def test_neighbours_3():
     expected = [np.array([-1])] * N_test
     expected[0] = np.array([0, 2, 3])
     expected[1] = np.array([3,])
+    result = load_results(N_test)
     for i in range(N_test):
-        neighbours = np.load(f'/tmp/_temp_polygon_neighbours_{i}.npy')
-        assert np.all(expected[i] == neighbours)
+        try:
+            assert np.all(expected[i] == result[i])
+        except:
+            print_failures(result, expected)
+            raise
+    cleanup(N_test=N_test)
+    return
+
+def test_neighbours_4():
+    # SERIAL & Keyword Arguments
+    # test c++ extension directly
+    N_polygons = 25
+    N_test = N_CPU
+    polygon_setup(N_polygons=N_polygons, N_test=N_test)
+    print('START 4')
+    polygon_neighbours.find_neighbours(progress_step_size=0,
+                                       verbose=False, parallel=False)
+    print('END 4')
+    # expected:
+    #   1 -> (0, 2, 3)
+    #   4 -> (3,)
+    #   5 -> (,)
+    expected = [np.array([-1])] * N_test
+    expected[0] = np.array([0, 2, 3])
+    expected[1] = np.array([3,])
+    result = load_results(N_test)
+    for i in range(N_test):
+        try:
+            assert np.all(expected[i] == result[i])
+        except:
+            print_failures(result, expected)
+            raise
     cleanup(N_test=N_test)
     return
