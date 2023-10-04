@@ -15,6 +15,7 @@ performance-help:
 	echo "use 'python3 scripts/check_performance.py --help' for custom profiling options."
 
 wheel:
+	rm dist/*
 	docker build -t polygonneighbours:builder .
 	docker run --rm polygonneighbours:builder &
 	sleep 30
